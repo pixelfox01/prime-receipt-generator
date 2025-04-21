@@ -25,8 +25,8 @@ def process_excel(input_path):
     stop = False
     chunk_index = 1
 
-    for i in range(0, len(df_skipped), 3):
-        chunk = df_skipped.iloc[i : i + 3]
+    for i in range(0, len(df_skipped), 6):
+        chunk = df_skipped.iloc[i : i + 6]
 
         new_sheet = wb.copy_worksheet(template_sheet)
         new_sheet.title = f"Group {chunk_index}"
