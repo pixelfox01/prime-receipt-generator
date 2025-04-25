@@ -41,7 +41,7 @@ start_row_idx = raw_df[raw_df.iloc[:, 0] == "Date"].index[0]
 df = pd.read_excel(input_file, skiprows=start_row_idx)
 
 date = df.iloc[0]["Date"]
-date = date.strtime("%d-%m-%Y")
+date = date.strftime("%d-%m-%Y")
 df = df.iloc[1:]  # Skip header row
 
 # Drop rows after first empty BillNo
