@@ -2,102 +2,93 @@ import pandas as pd
 import openpyxl
 import os
 import sys
+import shutil
 
-from pathlib import Path
+# === Settings ===
+template_file = "template.xlsx"
 
+input_dir = os.path.join(os.getcwd(), "input")
+if not os.path.exists(input_dir):
+    print(
+        "'input' folder not found. Please create a folder named 'input' in the same directory as the .exe."
+    )
+    sys.exit(1)
 
-def process_excel(input_path):
-    # Load data and find where table starts
-    raw_df = pd.read_excel(input_path, header=None)
-    start_row_idx = raw_df[raw_df.iloc[:, 0] == "Date"].index[0]
-    df = pd.read_excel(input_path, skiprows=start_row_idx)
+# List all .xlsx files in input/ excluding temp files
+xlsx_files = [
+    f for f in os.listdir(input_dir) if f.endswith(".xlsx") and not f.startswith("~$")
+]
 
-    date = df.iloc[1]["Date"].strftime("%d-%m-%Y")
-    df_skipped = df.iloc[1:]
+if len(xlsx_files) == 0:
+    print("No Excel files found in the 'input' folder.")
+    sys.exit(1)
+elif len(xlsx_files) > 1:
+    print("Multiple Excel files found in the 'input' folder. Please keep only one.")
+    sys.exit(1)
 
-    # Load template workbook and sheet
-    template_path = os.path.join(os.getcwd(), "template.xlsx")
-    if not os.path.exists(template_path):
-        raise FileNotFoundError("template.xlsx not found in the current directory.")
+input_file = os.path.join(input_dir, xlsx_files[0])
 
-    wb = openpyxl.load_workbook(template_path)
-    template_sheet = wb.active
+# Ensure the output directory exists
+output_dir = os.path.join(os.getcwd(), "output")
+os.makedirs(output_dir, exist_ok=True)
 
-    stop = False
-    chunk_index = 1
+# Define output path
+output_path = os.path.join(output_dir, "filled_receipts.xlsx")
 
-    for i in range(0, len(df_skipped), 6):
-        chunk = df_skipped.iloc[i : i + 6]
+# === Step 1: Load DSR and find where table starts ===
+raw_df = pd.read_excel(input_file, header=None)
+start_row_idx = raw_df[raw_df.iloc[:, 0] == "Date"].index[0]
+df = pd.read_excel(input_file, skiprows=start_row_idx)
 
-        new_sheet = wb.copy_worksheet(template_sheet)
-        new_sheet.title = f"Group {chunk_index}"
+date = df.iloc[1]["Date"]
+date = date.strftime("%d-%m-%Y")
+df = df.iloc[1:]  # Skip header row
 
-        for j, (_, row) in enumerate(chunk.iterrows(), start=1):
-            bill_no, party, net_amt = row["Vch No."], row["Particulars"], row["Debit"]
+# Drop rows after first empty BillNo
+billno_col = "Vch No."
+if billno_col in df.columns:
+    df = df[df[billno_col].notna() & (df[billno_col] != "")]
+else:
+    raise ValueError(f"'{billno_col}' column not found in input file.")
 
-            if pd.isna(bill_no) or bill_no == "":
-                stop = True
-                break
+# === Step 2: Divide data into chunks of 6 (per receipt page) ===
+chunks = [df.iloc[i : i + 6] for i in range(0, len(df), 6)]
 
-            for row_cells in new_sheet.iter_rows():
-                for cell in row_cells:
-                    if isinstance(cell.value, str):
-                        cell.value = cell.value.replace(f"{{{{DATE{j}}}}}", str(date))
-                        cell.value = cell.value.replace(
-                            f"{{{{BILL NO{j}}}}}", str(bill_no)
-                        )
-                        cell.value = cell.value.replace(f"{{{{PARTY{j}}}}}", str(party))
-                        cell.value = cell.value.replace(
-                            f"{{{{AMOUNT{j}}}}}", f"{net_amt:.2f}"
-                        )
+# === Step 3: Copy template and load workbook ===
+shutil.copy(template_file, output_path)
+wb = openpyxl.load_workbook(output_path)
 
-        for row_cells in new_sheet.iter_rows():
+# === Step 4: Fill in data and track used sheets ===
+used_sheet_names = []
+
+for group_index, chunk in enumerate(chunks):
+    if group_index >= len(wb.worksheets):
+        print("⚠️ Not enough sheets in template to fit all chunks.")
+        break
+
+    sheet = wb.worksheets[group_index]
+    used_sheet_names.append(sheet.title)
+
+    for i, (_, row) in enumerate(chunk.iterrows(), start=1):
+        store = row["Particulars"]
+        bill = row["Vch No."]
+        amount = row["Debit"]
+
+        for row_cells in sheet.iter_rows():
             for cell in row_cells:
-                if isinstance(cell.value, str) and "report_date" in cell.value:
-                    cell.value = cell.value.replace("report_date", str(date))
+                if isinstance(cell.value, str):
+                    cell.value = (
+                        cell.value.replace(f"{{{{DATE{i}}}}}", str(date))
+                        .replace(f"{{{{PARTY{i}}}}}", str(store))
+                        .replace(f"{{{{BILL NO{i}}}}}", str(bill))
+                        .replace(f"{{{{AMOUNT{i}}}}}", f"{amount:.2f}")
+                    )
 
-        chunk_index += 1
-        if stop:
-            break
+# === Step 5: Delete unused sheets ===
+for sheet in wb.worksheets[len(used_sheet_names) :]:
+    print(f"🗑️ Deleting unused sheet: {sheet.title}")
+    wb.remove(sheet)
 
-    del wb[template_sheet.title]
+wb.save(output_path)
 
-    # Ensure the output directory exists
-    output_dir = os.path.join(os.getcwd(), "output")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Define output path
-    output_path = os.path.join(output_dir, "filled_all_chunks.xlsx")
-    wb.save(output_path)
-
-    print(f"File generated: {output_path}")
-
-
-if __name__ == "__main__":
-    input_dir = os.path.join(os.getcwd(), "input")
-    if not os.path.exists(input_dir):
-        print(
-            "'input' folder not found. Please create a folder named 'input' in the same directory as the .exe."
-        )
-        sys.exit(1)
-
-    # List all .xlsx files in input/ excluding temp files
-    xlsx_files = [
-        f
-        for f in os.listdir(input_dir)
-        if f.endswith(".xlsx") and not f.startswith("~$")
-    ]
-
-    if len(xlsx_files) == 0:
-        print("No Excel files found in the 'input' folder.")
-        sys.exit(1)
-    elif len(xlsx_files) > 1:
-        print("Multiple Excel files found in the 'input' folder. Please keep only one.")
-        sys.exit(1)
-
-    input_file_path = os.path.join(input_dir, xlsx_files[0])
-
-    try:
-        process_excel(input_file_path)
-    except Exception as e:
-        print(f"Error processing file: {e}")
+print(f"File generated: {output_path}")
