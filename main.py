@@ -71,7 +71,7 @@ for group_index, chunk in enumerate(chunks):
     for i, (_, row) in enumerate(chunk.iterrows(), start=1):
         store = row["Party"]
         bill = row["BillNo"]
-        amount = row["Gross"]
+        amount = row["NetAmt"]
 
         for row_cells in sheet.iter_rows():
             for cell in row_cells:
